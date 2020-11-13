@@ -102,11 +102,18 @@ class VirtualMachine(object):
             if id == self.id:
                 return True
         return False
+    
+    def start(self):
+        vbox_manage(['startvm', self.name, '--type', 'headless'])
+
+    def stop(self):
+        vbox_manage(['controlvm', self.name, 'poweroff'])
+    
+    def take_snapshot(self, name, description=''):
+        vbox_manage(['snapshot', self.name, 'take', name, '--description', description])
 
     def __getitem__(self, key):
         return self._info(key)
-
-
 
     def _info(self, key):
         ''' Parses showvminfo command for a given key and returns the raw value '''
@@ -202,13 +209,7 @@ def set_defaults(args):
 
 def create_vm(args):
     '''
-    VBoxManage createvm --name $NAME --ostype Ubuntu_64 --register --basefolder ./vms/
-    VBoxManage modifyvm $NAME --cpus $CPUS --memory $MEMORY --vram $VRAM --boot1 dvd --vrde on --vrdeport 5008 --vrdeaddress 127.0.0.1
-    VBoxManage modifyvm $NAME --nic1 bridged --bridgeadapter1 enp5s0
-    VBoxManage storagectl $NAME --name $STORAGE_NAME --add sata
-    VBoxManage createhd --filename $VDI --size $STORAGE --format VDI --variant Standard
-    VBoxManage storageattach $NAME --storagectl $STORAGE_NAME --port 1 --type hdd --medium $VDI
-    VBoxManage storageattach $NAME --storagectl $STORAGE_NAME --port 0 --type dvddrive --medium $ISO
+    Create a virtual machine and mount the OS installation ISO
     '''
     vdi = os.path.join(args.base_folder, "%s.vdi" % args.name)
     storage_name = "%s_sata" % args.name
@@ -260,7 +261,7 @@ def defaults(args):
         print(line)
 
 def rm(args):
-    ''' Delete a virtual machine '''
+    ''' Delete a VM '''
     vm = None
     if args.name:
         vm = vm_by_name(args.name)
@@ -278,9 +279,41 @@ def rm(args):
     vbox_manage(['unregistervm', vm.name, '--delete'])
 
 
+def start(args):
+    ''' Start a VM '''
+    vm = None
+    if args.name:
+        vm = vm_by_name(args.name)
+    elif args.id:
+        vm = vm_by_id(args.id)
+    if vm is None:
+        if args.name:
+            print(WARN+"No virtual machine with name '%s'" % args.name)
+        elif args.id:
+            print(WARN+"No virtual machine with id '%s'" % args.id)
+        return
+    vm.start()
+    print(INFO+"Started vm '%s'" % vm.name)
+
+def stop(args):
+    ''' Stop a VM '''
+    vm = None
+    if args.name:
+        vm = vm_by_name(args.name)
+    elif args.id:
+        vm = vm_by_id(args.id)
+    if vm is None:
+        if args.name:
+            print(WARN+"No virtual machine with name '%s'" % args.name)
+        elif args.id:
+            print(WARN+"No virtual machine with id '%s'" % args.id)
+        return
+    vm.stop()
+    print(INFO+"Stopped vm '%s'" % vm.name)
+
+
 def main(args):
     pass
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog=__file__)
@@ -376,6 +409,18 @@ if __name__ == "__main__":
     parser_rm.add_argument('--name', type=str, help='VM name')
     parser_rm.add_argument('--id', type=str, help='VM id')
     parser_rm.set_defaults(func=rm)
+
+    # start
+    parser_start = subparsers.add_parser('start', help='Start a VM')
+    parser_start.add_argument('--name', type=str, help='VM name')
+    parser_start.add_argument('--id', type=str, help='VM id')
+    parser_start.set_defaults(func=start)
+
+    # stop
+    parser_stop = subparsers.add_parser('stop', help='Stop a VM')
+    parser_stop.add_argument('--name', type=str, help='VM name')
+    parser_stop.add_argument('--id', type=str, help='VM id')
+    parser_stop.set_defaults(func=stop)
 
     args = parser.parse_args()
     args.func(args)
