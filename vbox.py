@@ -8,7 +8,7 @@ import platform
 
 from pathlib import Path
 from random import randint
-from subprocess import run
+from subprocess import run, CalledProcessError
 
 
 VBOX_MANAGE = os.getenv("VBOX_MANAGE", "VBoxManage")
@@ -40,8 +40,12 @@ PROMPT = BOLD + PURPLE + "[?] " + RESET
 def vbox_manage(args):
     ''' Wrapper around teh VBoxManage command '''
     proc = run([VBOX_MANAGE] + args, capture_output=True)
-    proc.check_returncode()
-    return proc
+    try:
+        proc.check_returncode()
+        return proc
+    except CalledProcessError as err:
+        print(proc.stderr.decode('utf-8'))
+        raise err        
 
 def ip_route_show():
     proc = run(['ip', 'route', 'show'], capture_output=True)
@@ -86,13 +90,11 @@ class VirtualMachine(object):
     def __eq__(self, other):
         return self.id == other.id
 
-    def unmount_iso(self):
-        # VBoxManage storageattach ubuntu-server --storagectl ubuntu-server_sata --port 0 --type dvddrive --medium none
-        vbox_manage(["storageattach", self.name, "--storagectl", ])
+    def eject(self):
+        ''' Eject disk from DVDDrive, this function currently makes assumptions about names '''
+        storage_name = "%s_sata" % self.name
+        vbox_manage(["storageattach", self.name, "--storagectl", storage_name, '--port', '0', '--type', 'dvddrive', '--medium', 'none'])
     
-    def mount_iso(self):
-        pass
-
     def is_running(self):
         ps = vbox_manage(["list", "runningvms"])
         for line in ps.stdout.split(b'\n'):
@@ -104,10 +106,12 @@ class VirtualMachine(object):
     def __getitem__(self, key):
         return self._info(key)
 
+
+
     def _info(self, key):
         ''' Parses showvminfo command for a given key and returns the raw value '''
         info = vbox_manage(["showvminfo", self.id])
-        for line in info.stdout:
+        for line in info.stdout.split(b'\n'):
             info_key, info_value = parse_vm_info_line(line)
             if info_key is None:
                 continue
@@ -138,6 +142,12 @@ def list_vms():
 def vm_by_name(name):
     for vm in list_vms():
         if vm.name == name:
+            return vm
+    return None
+
+def vm_by_id(id):
+    for vm in list_vms():
+        if vm.id == id:
             return vm
     return None
 
@@ -198,11 +208,11 @@ def create_vm(args):
     '''
     vdi = os.path.join(args.base_folder, "%s.vdi" % args.name)
     storage_name = "%s_sata" % args.name
-    vbox_manage(['createvm', '--name', args.name, '--os-type', args.os_type, '--register', '--basefolder', args.base_folder])
-    vbox_manage(['modifyvm', args.name, '--cpus', args.cpus, '--memory', args.memory, '--vram', args.vram, '--boot1', 'dvd', '--vrde', 'on', '--vrdeport', args.vrde_port, '--vrdeaddress', args.vrde_host])
+    vbox_manage(['createvm', '--name', args.name, '--ostype', args.os_type, '--register', '--basefolder', args.base_folder])
+    vbox_manage(['modifyvm', args.name, '--cpus', str(args.cpus), '--memory', str(args.ram), '--vram', str(args.vram), '--boot1', 'dvd', '--vrde', 'on', '--vrdeport', str(args.vrde_port), '--vrdeaddress', args.vrde_host])
     vbox_manage(['modifyvm', args.name, '--nic1', 'bridged', '--bridgeadapter1', args.bridge_adapter])
-    vbox_manage(['storagectrl', args.name, '--name', storage_name, '--add', 'sata'])
-    vbox_manage(['createhd', '--filename', vdi, '--size', args.storage, '--format', 'VDI', '--variant', 'Standard'])
+    vbox_manage(['storagectl', args.name, '--name', storage_name, '--add', 'sata'])
+    vbox_manage(['createhd', '--filename', vdi, '--size', str(args.storage), '--format', 'VDI', '--variant', 'Standard'])
     vbox_manage(['storageattach', args.name, '--storagectl', storage_name, '--port', '1', '--type', 'hdd', '--medium', vdi])
     vbox_manage(['storageattach', args.name, '--storagectl', storage_name, '--port', '0', '--type', 'dvddrive', '--medium', args.iso])
     return vm_by_name(args.name)
@@ -224,7 +234,8 @@ def ls(args):
         print(color+line+RESET)
 
 def create(args):
-    print(args)
+    vm = create_vm(args)
+    print(vm['VRDE'])
 
 def defaults(args):
     set_defaults(vars(args))
@@ -235,6 +246,23 @@ def defaults(args):
         line = "%s%s%s " % (BOLD, row_format.format(key), RESET)
         line += str(value)
         print(line)
+
+def rm(args):
+    vm = None
+    if args.name:
+        vm = vm_by_name(args.name)
+    elif args.id:
+        vm = vm_by_id(args.id)
+    if vm is None:
+        if args.name:
+            print(WARN+"No virtual machine with name '%s'" % args.name)
+        elif args.id:
+            print(WARN+"No virtual machine with id '%s'" % args.id)
+        return
+    confirm = input(PROMPT+'Delete %s (id: %s) [Y/n]: ' % (vm.name, vm.id)) in ['Y', 'y', 'yes']
+    if not confirm:
+        return
+    vbox_manage(['unregistervm', vm.name, '--delete'])
 
 def main(args):
     pass
@@ -327,6 +355,12 @@ if __name__ == "__main__":
         type=str,
         help='Bridged network adapter')
     parser_create.set_defaults(func=create)
+
+    # rm
+    parser_rm = subparsers.add_parser('rm', help='Delete a VM')
+    parser_rm.add_argument('--name', type=str, help='VM name')
+    parser_rm.add_argument('--id', type=str, help='VM id')
+    parser_rm.set_defaults(func=rm)
 
     args = parser.parse_args()
     args.func(args)
