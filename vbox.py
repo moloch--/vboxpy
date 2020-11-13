@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 
 import os
-import pprint
+import json
 import argparse
 
+from pathlib import Path
+from random import randint
 from subprocess import run
 
-VBoxManage = os.getenv("VBOX_MANAGE", "VBoxManage")
+
+VBOX_MANAGE = os.getenv("VBOX_MANAGE", "VBoxManage")
+APP_DIR = os.getenv("VBOXPY_APP_DIR", os.path.join(str(Path.home()), '.vboxpy'))
+DEFAULTS_PATH = os.path.join(APP_DIR, 'defaults.json')
+DEFAULT_BASE = os.path.join(str(Path.home()), 'VirtualBox VMs')
 
 
 # === Text Colors ===
@@ -31,7 +37,7 @@ PROMPT = BOLD + PURPLE + "[?] " + RESET
 
 def vbox_manage(args):
     ''' Wrapper around teh VBoxManage command '''
-    proc = run([VBoxManage] + args, capture_output=True)
+    proc = run([VBOX_MANAGE] + args, capture_output=True)
     proc.check_returncode()
     return proc
 
@@ -110,6 +116,33 @@ def list_vms(debug=False):
 
 ### Command Handlers ###
 
+def get_default(key, default_value=None):
+    if not os.path.exists(DEFAULTS_PATH):
+        return default_value
+    try:
+        with open(DEFAULTS_PATH, 'r') as fp:
+            defaults = json.loads(fp.read())
+            return defaults.get(key, default_value)
+    except:
+        return default_value
+
+def set_defaults(args):
+    defaults = {}
+    if os.path.exists(DEFAULTS_PATH):
+        try:
+            with open(DEFAULTS_PATH, 'r') as fp:
+                defaults = json.loads(fp.read())
+        except:
+            pass
+    if 'func' in args:
+        del args['func']
+    defaults.update(args)
+    if not os.path.exists(APP_DIR):
+        os.mkdir(APP_DIR)
+    with open(DEFAULTS_PATH, 'w') as fp:
+        fp.write(json.dumps(defaults))
+
+
 def ls(args):
     ''' List VMs '''
     vms = list_vms()
@@ -129,21 +162,78 @@ def create(args):
     print(args)
 
 
+def defaults(args):
+    set_defaults(vars(args))
+
 def main(args):
     pass
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='PROG')
     parser.set_defaults(func=main)
+    
+    subparsers = parser.add_subparsers(help='Sub-commands')
+
+    # defaults
+    parser_defaults = subparsers.add_parser('defaults', help='Set default base folder')
+    parser_defaults.add_argument('--base-folder', default=DEFAULT_BASE, type=str, help='Set default base folder to store VMs')
+    parser_defaults.add_argument('--cpus',
+        default=4,
+        type=int,
+        help='Number of CPU cores')
+    parser_defaults.add_argument('--ram',
+        default=4096,
+        type=int,
+        help='RAM (MBs)')
+    parser_defaults.add_argument('--vram',
+        default=128,
+        type=int,
+        help='Video memory (MBs)')
+    parser_defaults.add_argument('--storage',
+        default=60000,
+        type=int,
+        help='Disk size (MBs)')
+    parser_defaults.set_defaults(func=defaults)
+
 
     # list
-    subparsers = parser.add_subparsers(help='ls help')
     parser_ls = subparsers.add_parser('ls', help='List VMs')
     parser_ls.add_argument('--running', action='store_true', help='List only running VMs')
     parser_ls.add_argument('--ids', action='store_true', help='Show VM IDs')
     parser_ls.set_defaults(func=ls)
 
     parser_create = subparsers.add_parser('create', help='Create a VM')
+    parser_create.add_argument('--name', required=True, type=str, help='VM name')
+    parser_create.add_argument('--iso', required=True, type=str, help='Path to operating system ISO')
+    parser_create.add_argument('--base-folder',
+        default=get_default('base-folder', DEFAULT_BASE),
+        type=str,
+        help='Base folder to store VMs')
+    parser_create.add_argument('--cpus',
+        default=get_default('cpus', 4),
+        type=int,
+        help='Number of CPU cores')
+    parser_create.add_argument('--ram',
+        default=get_default('ram', 4096),
+        type=int,
+        help='RAM (MBs)')
+    parser_create.add_argument('--vram',
+        default=get_default('vram', 128),
+        type=int,
+        help='Video memory (MBs)')
+    parser_create.add_argument('--storage',
+        default=get_default('storage', 60000),
+        type=int,
+        help='Disk size (MBs)')
+    parser_create.add_argument('--vrde-port',
+        default=randint(5000, 6000),
+        type=int,
+        help='VRDE listen port')
+    parser_create.add_argument('--vrde-host',
+        default='127.0.0.1',
+        type=str,
+        help='VRDE host interface')
     parser_create.set_defaults(func=create)
 
     args = parser.parse_args()
