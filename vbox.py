@@ -121,6 +121,10 @@ class VirtualMachine(object):
 
 
 ### Command Helpers ###
+def confirm_prompt(prompt):
+    response = input(PROMPT+prompt+' [Y/n]: ')
+    return str(response).lower() in ['y', 'yes']
+
 def list_ostypes():
     ls = vbox_manage(["list", "ostypes"])
     ostypes = []
@@ -220,7 +224,7 @@ def create_vm(args):
 
 ### CLI Command Handlers ###
 def ls(args):
-    ''' List VMs '''
+    ''' List virtual machines '''
     vms = list_vms()
     max_name = max([len(vm.name) for vm in vms])
     row_format = "{:<%d}" % max_name
@@ -229,15 +233,23 @@ def ls(args):
         line = row_format.format(vm.name)
         if args.ids:
             line += " " + row_format.format(vm.id)
+        if args.vrde:
+            line += " VRDE: " + vm['VRDE'].decode('utf-8')
         if args.running and not vm.is_running():
             continue
         print(color+line+RESET)
 
 def create(args):
+    ''' Create a new virtual machine '''
+    if vm_by_name(args.name) is not None:
+        print(WARN+"VM '%s' already exists" % args.name)
+        return
     vm = create_vm(args)
-    print(vm['VRDE'])
+    print(INFO+"Created VM '%s'" % vm.name)
+    print(INFO+"VRDE: " + vm['VRDE'].decode('utf-8'))
 
 def defaults(args):
+    ''' Configure default settings '''
     set_defaults(vars(args))
     defaults = get_defaults()
     max_key = max([len(key) for key in defaults])
@@ -248,6 +260,7 @@ def defaults(args):
         print(line)
 
 def rm(args):
+    ''' Delete a virtual machine '''
     vm = None
     if args.name:
         vm = vm_by_name(args.name)
@@ -259,10 +272,11 @@ def rm(args):
         elif args.id:
             print(WARN+"No virtual machine with id '%s'" % args.id)
         return
-    confirm = input(PROMPT+'Delete %s (id: %s) [Y/n]: ' % (vm.name, vm.id)) in ['Y', 'y', 'yes']
+    confirm = confirm_prompt('Delete %s (id: %s)' % (vm.name, vm.id))
     if not confirm:
         return
     vbox_manage(['unregistervm', vm.name, '--delete'])
+
 
 def main(args):
     pass
@@ -310,6 +324,7 @@ if __name__ == "__main__":
     # list
     parser_ls = subparsers.add_parser('ls', help='List VMs')
     parser_ls.add_argument('--running', action='store_true', help='List only running VMs')
+    parser_ls.add_argument('--vrde', action='store_true', help='Show VRDE info')
     parser_ls.add_argument('--ids', action='store_true', help='Show VM IDs')
     parser_ls.set_defaults(func=ls)
 
