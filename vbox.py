@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import json
 import argparse
 import platform
@@ -73,7 +74,7 @@ def parse_vm_info_line(line):
 
 class VirtualMachine(object):
 
-    ''' Helper class to wrap VM '''
+    ''' Virtual Machine class for easy access to VM attributes '''
 
     def __init__(self, id, name):
         self.id = id
@@ -100,6 +101,9 @@ class VirtualMachine(object):
                 return True
         return False
 
+    def __getitem__(self, key):
+        return self._info(key)
+
     def _info(self, key):
         ''' Parses showvminfo command for a given key and returns the raw value '''
         info = vbox_manage(["showvminfo", self.id])
@@ -112,7 +116,16 @@ class VirtualMachine(object):
         return None
 
 
-def list_vms(debug=False):
+### Command Helpers ###
+def list_ostypes():
+    ls = vbox_manage(["list", "ostypes"])
+    ostypes = []
+    for line in ls.stdout.split(b'\n'):
+        if line.startswith(b"ID:"):
+            ostypes.append(line[3:].strip().decode('utf-8'))
+    return ostypes
+
+def list_vms():
     ls = vbox_manage(["list", "vms"])
     vms = []
     for line in ls.stdout.split(b'\n'):
@@ -122,8 +135,12 @@ def list_vms(debug=False):
         vms.append(VirtualMachine(id, name))
     return vms
 
+def vm_by_name(name):
+    for vm in list_vms():
+        if vm.name == name:
+            return vm
+    return None
 
-### Command Handlers ###
 def get_default_network_adapter():
     if platform.system() not in ['Linux']:
         return None
@@ -144,6 +161,15 @@ def get_default(key, default_value=None):
     except:
         return default_value
 
+def get_defaults():
+    if not os.path.exists(DEFAULTS_PATH):
+        return {}
+    try:
+        with open(DEFAULTS_PATH, 'r') as fp:
+            return json.loads(fp.read())
+    except:
+        return {}
+
 def set_defaults(args):
     defaults = {}
     if os.path.exists(DEFAULTS_PATH):
@@ -160,7 +186,29 @@ def set_defaults(args):
     with open(DEFAULTS_PATH, 'w') as fp:
         fp.write(json.dumps(defaults))
 
+def create_vm(args):
+    '''
+    VBoxManage createvm --name $NAME --ostype Ubuntu_64 --register --basefolder ./vms/
+    VBoxManage modifyvm $NAME --cpus $CPUS --memory $MEMORY --vram $VRAM --boot1 dvd --vrde on --vrdeport 5008 --vrdeaddress 127.0.0.1
+    VBoxManage modifyvm $NAME --nic1 bridged --bridgeadapter1 enp5s0
+    VBoxManage storagectl $NAME --name $STORAGE_NAME --add sata
+    VBoxManage createhd --filename $VDI --size $STORAGE --format VDI --variant Standard
+    VBoxManage storageattach $NAME --storagectl $STORAGE_NAME --port 1 --type hdd --medium $VDI
+    VBoxManage storageattach $NAME --storagectl $STORAGE_NAME --port 0 --type dvddrive --medium $ISO
+    '''
+    vdi = os.path.join(args.base_folder, "%s.vdi" % args.name)
+    storage_name = "%s_sata" % args.name
+    vbox_manage(['createvm', '--name', args.name, '--os-type', args.os_type, '--register', '--basefolder', args.base_folder])
+    vbox_manage(['modifyvm', args.name, '--cpus', args.cpus, '--memory', args.memory, '--vram', args.vram, '--boot1', 'dvd', '--vrde', 'on', '--vrdeport', args.vrde_port, '--vrdeaddress', args.vrde_host])
+    vbox_manage(['modifyvm', args.name, '--nic1', 'bridged', '--bridgeadapter1', args.bridge_adapter])
+    vbox_manage(['storagectrl', args.name, '--name', storage_name, '--add', 'sata'])
+    vbox_manage(['createhd', '--filename', vdi, '--size', args.storage, '--format', 'VDI', '--variant', 'Standard'])
+    vbox_manage(['storageattach', args.name, '--storagectl', storage_name, '--port', '1', '--type', 'hdd', '--medium', vdi])
+    vbox_manage(['storageattach', args.name, '--storagectl', storage_name, '--port', '0', '--type', 'dvddrive', '--medium', args.iso])
+    return vm_by_name(args.name)
 
+
+### CLI Command Handlers ###
 def ls(args):
     ''' List VMs '''
     vms = list_vms()
@@ -175,45 +223,58 @@ def ls(args):
             continue
         print(color+line+RESET)
 
-
 def create(args):
     print(args)
 
-
 def defaults(args):
     set_defaults(vars(args))
+    defaults = get_defaults()
+    max_key = max([len(key) for key in defaults])
+    row_format = "{:<%d}" % max_key
+    for key, value in defaults.items():
+        line = "%s%s%s " % (BOLD, row_format.format(key), RESET)
+        line += str(value)
+        print(line)
 
 def main(args):
     pass
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog='PROG')
+    parser = argparse.ArgumentParser(prog=__file__)
     parser.set_defaults(func=main)
     
     subparsers = parser.add_subparsers(help='Sub-commands')
 
     # defaults
     parser_defaults = subparsers.add_parser('defaults', help='Configure default VM settings')
-    parser_defaults.add_argument('--base-folder', default=DEFAULT_BASE, type=str, help='Set default base folder to store VMs')
+    parser_defaults.add_argument('--base-folder', 
+        default=get_default('base_folder', DEFAULT_BASE),
+        type=str,
+        help='Set default base folder to store VMs')
+    parser_defaults.add_argument('--os-type',
+        default=get_default('os-type', 'Other_64'),
+        choices=list_ostypes(),
+        type=str,
+        help='Default guest OS type')
     parser_defaults.add_argument('--cpus',
-        default=4,
+        default=get_default('cpus', 4),
         type=int,
         help='Default number of CPU cores')
     parser_defaults.add_argument('--ram',
-        default=4096,
+        default=get_default('ram', 4096),
         type=int,
         help='Default RAM (MBs)')
     parser_defaults.add_argument('--vram',
-        default=128,
+        default=get_default('vram', 128),
         type=int,
         help='Default video memory (MBs)')
     parser_defaults.add_argument('--storage',
-        default=60000,
+        default=get_default('storage', 60000),
         type=int,
         help='Default disk size (MBs)')
-    parser_defaults.add_argument('--bridgeadapter',
-        default=get_default_network_adapter(),
+    parser_defaults.add_argument('--bridge-adapter',
+        default=get_default('bridge_adapter', get_default_network_adapter()),
         type=str,
         help='Default bridged network adapter')
     parser_defaults.set_defaults(func=defaults)
@@ -228,6 +289,11 @@ if __name__ == "__main__":
     parser_create = subparsers.add_parser('create', help='Create a VM')
     parser_create.add_argument('--name', required=True, type=str, help='VM name')
     parser_create.add_argument('--iso', required=True, type=str, help='Path to operating system ISO')
+    parser_create.add_argument('--os-type',
+        default=get_default('os-type', 'Other_64'),
+        choices=list_ostypes(),
+        type=str,
+        help='Specify guest OS type')
     parser_create.add_argument('--base-folder',
         default=get_default('base_folder', DEFAULT_BASE),
         type=str,
@@ -256,6 +322,10 @@ if __name__ == "__main__":
         default='127.0.0.1',
         type=str,
         help='VRDE host interface')
+    parser_create.add_argument('--bridge-adapter',
+        default=get_default('bridge_adapter', get_default_network_adapter()),
+        type=str,
+        help='Bridged network adapter')
     parser_create.set_defaults(func=create)
 
     args = parser.parse_args()
