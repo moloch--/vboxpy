@@ -3,6 +3,7 @@
 import os
 import json
 import argparse
+import platform
 
 from pathlib import Path
 from random import randint
@@ -38,6 +39,11 @@ PROMPT = BOLD + PURPLE + "[?] " + RESET
 def vbox_manage(args):
     ''' Wrapper around teh VBoxManage command '''
     proc = run([VBOX_MANAGE] + args, capture_output=True)
+    proc.check_returncode()
+    return proc
+
+def ip_route_show():
+    proc = run(['ip', 'route', 'show'], capture_output=True)
     proc.check_returncode()
     return proc
 
@@ -79,10 +85,13 @@ class VirtualMachine(object):
     def __eq__(self, other):
         return self.id == other.id
 
-    def unmount_dvd(self):
+    def unmount_iso(self):
         # VBoxManage storageattach ubuntu-server --storagectl ubuntu-server_sata --port 0 --type dvddrive --medium none
         vbox_manage(["storageattach", self.name, "--storagectl", ])
     
+    def mount_iso(self):
+        pass
+
     def is_running(self):
         ps = vbox_manage(["list", "runningvms"])
         for line in ps.stdout.split(b'\n'):
@@ -115,6 +124,15 @@ def list_vms(debug=False):
 
 
 ### Command Handlers ###
+def get_default_network_adapter():
+    if platform.system() not in ['Linux']:
+        return None
+    ip = ip_route_show()
+    for line in ip.stdout.split(b'\n'):
+        if not line.startswith(b'default'):
+            continue
+        words = line.split(b' ')
+        return words[words.index(b'dev')+1].decode('utf-8')
 
 def get_default(key, default_value=None):
     if not os.path.exists(DEFAULTS_PATH):
@@ -176,26 +194,29 @@ if __name__ == "__main__":
     subparsers = parser.add_subparsers(help='Sub-commands')
 
     # defaults
-    parser_defaults = subparsers.add_parser('defaults', help='Set default base folder')
+    parser_defaults = subparsers.add_parser('defaults', help='Configure default VM settings')
     parser_defaults.add_argument('--base-folder', default=DEFAULT_BASE, type=str, help='Set default base folder to store VMs')
     parser_defaults.add_argument('--cpus',
         default=4,
         type=int,
-        help='Number of CPU cores')
+        help='Default number of CPU cores')
     parser_defaults.add_argument('--ram',
         default=4096,
         type=int,
-        help='RAM (MBs)')
+        help='Default RAM (MBs)')
     parser_defaults.add_argument('--vram',
         default=128,
         type=int,
-        help='Video memory (MBs)')
+        help='Default video memory (MBs)')
     parser_defaults.add_argument('--storage',
         default=60000,
         type=int,
-        help='Disk size (MBs)')
+        help='Default disk size (MBs)')
+    parser_defaults.add_argument('--bridgeadapter',
+        default=get_default_network_adapter(),
+        type=str,
+        help='Default bridged network adapter')
     parser_defaults.set_defaults(func=defaults)
-
 
     # list
     parser_ls = subparsers.add_parser('ls', help='List VMs')
@@ -203,11 +224,12 @@ if __name__ == "__main__":
     parser_ls.add_argument('--ids', action='store_true', help='Show VM IDs')
     parser_ls.set_defaults(func=ls)
 
+    # create
     parser_create = subparsers.add_parser('create', help='Create a VM')
     parser_create.add_argument('--name', required=True, type=str, help='VM name')
     parser_create.add_argument('--iso', required=True, type=str, help='Path to operating system ISO')
     parser_create.add_argument('--base-folder',
-        default=get_default('base-folder', DEFAULT_BASE),
+        default=get_default('base_folder', DEFAULT_BASE),
         type=str,
         help='Base folder to store VMs')
     parser_create.add_argument('--cpus',
