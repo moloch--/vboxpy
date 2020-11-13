@@ -1,0 +1,59 @@
+# Bytecode
+*.py[co]
+
+# Leftovers from merges
+*.orig
+
+#Locale
+locale/.~*
+
+# Packages
+*.egg
+*.egg-info
+dist
+build
+eggs
+parts
+bin
+var
+sdist
+develop-eggs
+.installed.cfg
+
+# SSL Stuff
+*.crt
+*.key
+
+# XML exports
+*.xml
+
+# SQLite3 databases
+*.db
+*.db-journal
+
+# Screen files
+*.0
+
+# Log files
+*.log
+
+# Installer logs
+pip-log.txt
+
+# IDE
+.project
+.pydevproject
+.idea/*
+.vscode/*
+
+# OSX
+.DS_Store
+
+__pycache__
+*/__pycache__
+
+# Backups
+*.bak
+
+# Readme
+!*README.md
